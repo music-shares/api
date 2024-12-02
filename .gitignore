@@ -1,0 +1,4 @@
+**/constants.go
+.DS_Store
+*.sum
+**/.env
