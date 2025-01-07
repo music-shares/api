@@ -3,10 +3,14 @@ package handlers
 
 import (
 	"fmt"
+	"net/http"
+	"time"
+
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/music-shares/api/internal/models"
 	"github.com/music-shares/api/internal/services"
-	"net/http"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type AuthHandler struct {
@@ -20,9 +24,51 @@ func NewAuthHandler(authService *services.AuthService) *AuthHandler {
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
-	h.authService.Register(c)
-}
+    var user models.User
+    
+    // Log de debug
+    fmt.Printf("Début de l'enregistrement\n")
 
+    if err := c.ShouldBindJSON(&user); err != nil {
+        fmt.Printf("Erreur de binding JSON: %v\n", err)
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
+        return
+    }
+
+    // Log des données reçues
+    fmt.Printf("Données reçues: %+v\n", user)
+
+    // Hashage du mot de passe
+    hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+    if err != nil {
+        fmt.Printf("Erreur de hashage: %v\n", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error processing password"})
+        return
+    }
+
+    // Préparation de l'utilisateur
+    user.Password = string(hashedPassword)
+    user.ID = uuid.New().String()
+    user.CreatedAt = time.Now()
+    user.UpdatedAt = time.Now()
+
+    // Création dans la base de données
+    if err := h.authService.Db.Create(&user).Error; err != nil {
+        fmt.Printf("Erreur de création en DB: %v\n", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
+        return
+    }
+
+    // Succès
+    c.JSON(http.StatusCreated, gin.H{
+        "message": "User created successfully",
+        "user": gin.H{
+            "id": user.ID,
+            "email": user.Email,
+            "username": user.Username,
+        },
+    })
+}
 func (h *AuthHandler) Login(c *gin.Context) {
 	h.authService.Login(c)
 }

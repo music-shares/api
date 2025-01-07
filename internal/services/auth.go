@@ -2,12 +2,15 @@
 package services
 
 import (
+	"log"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/music-shares/api/internal/models"
 	"github.com/music-shares/api/pkg/utils"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
-	"net/http"
 )
 
 type AuthService struct {
@@ -21,37 +24,47 @@ func NewAuthService(db *gorm.DB) *AuthService {
 }
 
 func (s *AuthService) Register(c *gin.Context) {
-	var user models.User
-	if err := c.ShouldBindJSON(&user); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+    var user models.User
+    
+    // Log la requête reçue
+    log.Printf("Tentative d'enregistrement - Données reçues : %+v", c.Request.Body)
 
-	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error hashing password"})
-		return
-	}
-	user.Password = string(hashedPassword)
+    if err := c.ShouldBindJSON(&user); err != nil {
+        log.Printf("Erreur de binding JSON: %v", err)
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
 
-	// Save user
-	if err := s.Db.Create(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
-		return
-	}
+    // Log après le binding
+    log.Printf("Données après binding : %+v", user)
 
-	// Generate token
-	token, err := utils.GenerateToken(&user)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating token"})
-		return
-	}
+    // Génération d'un ID si non fourni
+    if user.ID == "" {
+        user.ID = uuid.New().String()
+    }
 
-	c.JSON(http.StatusCreated, gin.H{
-		"token": token,
-		"user":  user,
-	})
+    // Hash du mot de passe
+    hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+    if err != nil {
+        log.Printf("Erreur de hashage du mot de passe: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error hashing password"})
+        return
+    }
+    user.Password = string(hashedPassword)
+
+    // Création de l'utilisateur dans la BD
+    if err := s.Db.Create(&user).Error; err != nil {
+        log.Printf("Erreur lors de la création en BD: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
+        return
+    }
+
+    log.Printf("Utilisateur créé avec succès: %s", user.ID)
+
+    c.JSON(http.StatusCreated, gin.H{
+        "user": user.ID,
+        "message": "User created successfully",
+    })
 }
 
 func (s *AuthService) Login(c *gin.Context) {
