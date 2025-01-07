@@ -66,6 +66,7 @@ func main() {
 	r.POST("/register", authHandler.Register)
 	r.POST("/login", authHandler.Login)
 	r.GET("/check-auth", middleware.Auth(), authHandler.CheckAuth) // Nouvelle route
+	r.GET("/users/check", authHandler.GetUserByEmail)
 
 	api := r.Group("/api")
 	api.Use(middleware.Auth())

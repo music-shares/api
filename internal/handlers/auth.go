@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/music-shares/api/internal/models"
 	"github.com/music-shares/api/internal/services"
+	"github.com/music-shares/api/pkg/utils"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -24,42 +25,57 @@ func NewAuthHandler(authService *services.AuthService) *AuthHandler {
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
-    var user models.User
+    // Structure pour le request body
+    var registerRequest struct {
+        Username string `json:"username" binding:"required"`
+        Email    string `json:"email" binding:"required,email"`
+        Password string `json:"password" binding:"required"`
+    }
     
-    // Log de debug
+    // Log début
     fmt.Printf("Début de l'enregistrement\n")
 
-    if err := c.ShouldBindJSON(&user); err != nil {
+    // Parse le JSON
+    if err := c.ShouldBindJSON(&registerRequest); err != nil {
         fmt.Printf("Erreur de binding JSON: %v\n", err)
         c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
         return
     }
 
     // Log des données reçues
-    fmt.Printf("Données reçues: %+v\n", user)
+    fmt.Printf("Données reçues - Username: %s, Email: %s, Password: %s\n", 
+        registerRequest.Username, 
+        registerRequest.Email, 
+        registerRequest.Password)
 
-    // Hashage du mot de passe
-    hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+    // Hash du mot de passe
+    hashedPassword, err := bcrypt.GenerateFromPassword([]byte(registerRequest.Password), bcrypt.DefaultCost)
     if err != nil {
         fmt.Printf("Erreur de hashage: %v\n", err)
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Error processing password"})
         return
     }
 
-    // Préparation de l'utilisateur
-    user.Password = string(hashedPassword)
-    user.ID = uuid.New().String()
-    user.CreatedAt = time.Now()
-    user.UpdatedAt = time.Now()
+    // Log du hash
+    fmt.Printf("Hash généré: %s\n", string(hashedPassword))
 
-    // Création dans la base de données
+    // Création de l'utilisateur
+    user := models.User{
+        ID:        uuid.New().String(),
+        Username:  registerRequest.Username,
+        Email:     registerRequest.Email,
+        Password:  string(hashedPassword),
+        CreatedAt: time.Now(),
+        UpdatedAt: time.Now(),
+    }
+
+    // Sauvegarde en DB
     if err := h.authService.Db.Create(&user).Error; err != nil {
         fmt.Printf("Erreur de création en DB: %v\n", err)
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
         return
     }
 
-    // Succès
     c.JSON(http.StatusCreated, gin.H{
         "message": "User created successfully",
         "user": gin.H{
@@ -69,8 +85,62 @@ func (h *AuthHandler) Register(c *gin.Context) {
         },
     })
 }
+
 func (h *AuthHandler) Login(c *gin.Context) {
-	h.authService.Login(c)
+    // Structure pour recevoir les données de login
+    var loginRequest struct {
+        Email    string `json:"email" binding:"required,email"`
+        Password string `json:"password" binding:"required"`
+    }
+
+    // Log de debug
+    fmt.Printf("Tentative de connexion\n")
+
+    // Parse du JSON
+    if err := c.ShouldBindJSON(&loginRequest); err != nil {
+        fmt.Printf("Erreur de binding JSON: %v\n", err)
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
+        return
+    }
+
+    // Log des données reçues (ne pas logger le mot de passe en production)
+    fmt.Printf("Email reçu: %s\n", loginRequest.Email)
+
+    // Recherche de l'utilisateur
+    var user models.User
+    if err := h.authService.Db.Where("email = ?", loginRequest.Email).First(&user).Error; err != nil {
+        fmt.Printf("Utilisateur non trouvé: %v\n", err)
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+        return
+    }
+
+    // Vérification du mot de passe
+    fmt.Printf("Mot de passe stocké (hash): %s\n", user.Password)
+    fmt.Printf("Mot de passe fourni: %s\n", loginRequest.Password)
+
+    if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginRequest.Password)); err != nil {
+        fmt.Printf("Détails de l'erreur bcrypt: %v\n", err)
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+        return
+    }
+
+    // Génération du token JWT
+    token, err := utils.GenerateToken(&user)
+    if err != nil {
+        fmt.Printf("Erreur de génération du token: %v\n", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating token"})
+        return
+    }
+
+    // Succès
+    c.JSON(http.StatusOK, gin.H{
+        "token": token,
+        "user": gin.H{
+            "id": user.ID,
+            "email": user.Email,
+            "username": user.Username,
+        },
+    })
 }
 
 func (h *AuthHandler) GetAllUsers(c *gin.Context) {
@@ -103,6 +173,25 @@ func (h *AuthHandler) CheckAuth(c *gin.Context) {
     var user models.User
     if err := h.authService.Db.First(&user, "id = ?", userID).Error; err != nil { // Changé db en DB
         c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "user": gin.H{
+            "id": user.ID,
+            "email": user.Email,
+            "username": user.Username,
+        },
+    })
+}
+
+func (h *AuthHandler) GetUserByEmail(c *gin.Context) {
+    email := c.Query("email")
+    var user models.User
+    
+    result := h.authService.Db.Where("email = ?", email).First(&user)
+    if result.Error != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
         return
     }
 
